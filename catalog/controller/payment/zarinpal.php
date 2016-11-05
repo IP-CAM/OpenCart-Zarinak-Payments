@@ -1,154 +1,207 @@
 <?php
-require_once(DIR_SYSTEM.'library/zarinpal_methods/methods.php');
-class Controllerpaymentzarinpal extends Controller {
+/** written by Mohsen Ranjbar Helan (mimrahe) for Zarinpal Company **/
+/** support by Zarinpal.com **/
+
+class ControllerPaymentZarinpal extends Controller {
 	public function index() {
 		$this->load->language('payment/zarinpal');
-
-		$data['text_instruction'] = $this->language->get('text_instruction');
-		$data['text_description'] = $this->language->get('text_description');
-		$data['text_payment'] = $this->language->get('text_payment');
-
+		
+		$data['text_connect'] = $this->language->get('text_connect');
+		$data['text_loading'] = $this->language->get('text_loading');
+		$data['text_wait'] = $this->language->get('text_wait');
+		
 		$data['button_confirm'] = $this->language->get('button_confirm');
 
-		$data['bank'] = nl2br($this->config->get('zarinpal_bank' . $this->config->get('config_language_id')));
-
-		$data['continue'] = $this->url->link('checkout/success');
-
-		if (file_exists(DIR_TEMPLATE . $this->config->get('config_template') . '/template/payment/zarinpal.tpl')) {
-			return $this->load->view($this->config->get('config_template') . '/template/payment/zarinpal.tpl', $data);
-		} else {
-			return $this->load->view('default/template/payment/zarinpal.tpl', $data);
-		}
+		return $this->load->view('payment/zarinpal.tpl', $data);
 	}
-public function confirm() {
+
+	public function confirm() {
+		$this->load->language('payment/zarinpal');
 
 		$this->load->model('checkout/order');
-
 		$order_info = $this->model_checkout_order->getOrder($this->session->data['order_id']);
+		
+		$amount = $this->correctAmount($order_info);
+		
+		$data['return'] = $this->url->link('checkout/success', '', true);
+		$data['cancel_return'] = $this->url->link('checkout/payment', '', true);
+		$data['back'] = $this->url->link('checkout/payment', '', true);
+		
+		$MerchantID = $this->config->get('zarinpal_pin');  	//Required
+		$Amount = $amount; 									//Amount will be based on Toman  - Required
+		$Description = $this->language->get('text_order_no') . $order_info['order_id']; // Required
+		$Email = isset($order_info['email']) ? $order_info['email'] : ''; 	// Optional
+		$Mobile = isset($order_info['fax']) ? $order_info['fax'] : $order_info['telephone']; 	// Optional
+		$data['order_id'] = $this->encryption->encrypt($this->session->data['order_id']);
+		$CallbackURL = $this->url->link('payment/zarinpal/callback', 'order_id=' . $data['order_id'], true);  // Required
 
-		$this->load->library('encryption');
+		$parameters = array(
+			'MerchantID' 	=> $MerchantID,
+			'Amount' 		=> $Amount,
+			'Description' 	=> $Description,
+			'Email' 		=> $Email,
+			'Mobile' 		=> $Mobile,
+			'CallbackURL' 	=> $CallbackURL
+			);
 
-		$encryption = new Encryption($this->config->get('config_encryption'));
+		$requestResult = $this->zpRequest($parameters);
 
-		//$data['Amount'] = $this->currency->format($order_info['total'], 'TMN', $order_info['value'], FALSE);
-
-
-		$data['Amount'] = $this->currency->format($order_info['total'], $order_info['currency_code'], $order_info['currency_value'], false);
-
-		//$data['Amount']=$data['Amount']\10;
-
-
-		$data['MerchantID']=$this->config->get('zarinpal_MerchantID');
-
-
-		$data['ResNum'] = $this->session->data['order_id'];
-
-		$data['return'] = $this->url->link('checkout/success', '', 'SSL');
-		//$data['return'] = HTTPS_SERVER . 'index.php?route=checkout/success';
-
-		$data['cancel_return'] = $this->url->link('checkout/payment', '', 'SSL');
-		//$data['cancel_return'] = HTTPS_SERVER . 'index.php?route=checkout/payment';
-
-		$data['back'] = $this->url->link('checkout/payment', '', 'SSL');
-
-
-
-		$amount = $data['Amount'];
-		if($this->currency->getCode()!='RLS') {
-		    $amount=$amount * 1;
-	    }
-
-        $data['order_id'] = $encryption->encrypt($this->session->data['order_id']);
-
-	//	$callbackUrl  =  $this->url->link('payment/zarinpal/callback', 'order_id=' . $data['order_id'], 'SSL');
-		$callbackUrl  =  $this->url->link('payment/zarinpal/callback&order_id=' . $data['order_id']);
-
-        $result = Request($data['MerchantID'],$amount,'پرداحت سفارش شماره : '.$this->session->data['order_id'],$callbackUrl);
-        if($result->Status != 100){
-            $json = array();
-	    	$json['error']= "Can not connect to zarinpal.<br>";
-
-		    @$this->response->setOutput(json_encode($json));
-        }
-
-
-		if($result->Status == 100){
-
-		$data['action'] = $result->Authority;
-		$json = array();
-		$json['success']= $data['action'];
-
-		$this->response->setOutput(json_encode($json));
-
+		if(!$requestResult){
+			$json = array();
+			$json['error']= $this->language->get('error_cant_connect');				
+		} elseif($requestResult->Status == 100) {
+			$data['action'] = $requestResult->Authority;
+			$json['success']= $data['action'];
 		} else {
-
-			$this->CheckState($result->Status );
-			//die();
+			$json = $this->checkState($requestResult->Status);
 		}
 
-//
+		$this->response->addHeader('Content-Type: application/json');
 
-
-
-}
-
-	public function CheckState($status) {
-		$json = array();
-
-
-
-			$json['error']=  $status ;
-
-
-
-		$this->response->setOutput(json_encode($json));
-
-}
-
-function verify_payment($Authority,$Amount){
-
-    $data['MerchantID'] = $this->config->get('zarinpal_MerchantID');
-    $result = Verification($data['MerchantID'],$Amount,$Authority);
-	$this->CheckState($result);
-
-	if($result->Status==100)
-		return true;
-
-	else {
-		return false;
+		return $this->response->setOutput(json_encode($json));
 	}
 
-	}
 
 
 	public function callback() {
-		$this->load->library('encryption');
+		
+		$this->load->language('payment/zarinpal');
 
-		$encryption = new Encryption($this->config->get('config_encryption'));
-        $Authority = $_GET['Authority'];
-		$order_id = $encryption->decrypt($this->request->get['order_id']);
-		$MerchantID=$this->config->get('zarinpal_MerchantID');
-		$debugmod=false;
-
-		$this->load->model('checkout/order');
-		$order_info = $this->model_checkout_order->getOrder($order_id);
+		if ($this->session->data['payment_method']['code'] != 'zarinpal') {
+			return false;
+		}
 
 
-			$Amount = $this->currency->format($order_info['total'], $order_info['currency_code'], $order_info['currency_value'], false);		//echo $data['Amount'];
-		@$amount = $Amount/$order_info['currency_value'];
+		$this->document->setTitle($this->language->get('text_title'));
 
-		if ($order_info) {
-			if(($this->verify_payment($Authority,$amount )) or ($debugmod==true)) {
-			$this->model_checkout_order->addOrderHistory($order_id, $this->config->get('zarinpal_order_status_id'),'شماره رسيد ديجيتالي; Authority: ');
+		$data['heading_title'] = $this->language->get('text_title');
+		$data['text_results'] = $this->language->get('text_results');
+		$data['results'] = "";
 
-				$this->response->setOutput('<html><head><meta http-equiv="refresh" CONTENT="2; url=' . $this->url->link('checkout/success') . '"></head><body><table border="0" width="100%"><tr><td>&nbsp;</td><td style="border: 1px solid gray; font-family: tahoma; font-size: 14px; direction: rtl; text-align: right;">با تشکر پرداخت تکمیل شد.لطفا چند لحظه صبر کنید و یا  <a href="' . $this->url->link('checkout/success') . '"><b>اینجا کلیک نمایید</b></a></td><td>&nbsp;</td></tr></table></body></html>');
-			}else{
-                $this->response->setOutput('<html><body><table border="0" width="100%"><tr><td>&nbsp;</td><td style="border: 1px solid gray; font-family: tahoma; font-size: 14px; direction: rtl; text-align: right;">.<br />خريد انجام نشد<br /><a href="' . $this->url->link('checkout/cart').  '"><b>بازگشت به فروشگاه</b></a></td><td>&nbsp;</td></tr></table></body></html>');
-            }
-		} else {
-			$this->response->setOutput('<html><body><table border="0" width="100%"><tr><td>&nbsp;</td><td style="border: 1px solid gray; font-family: tahoma; font-size: 14px; direction: rtl; text-align: right;">.<br /><br /><a href="' . $this->url->link('checkout/cart').  '"><b>بازگشت به فروشگاه</b></a></td><td>&nbsp;</td></tr></table></body></html>');
+			//breadcrumbs
+		$data['breadcrumbs'] = array();
+		$data['breadcrumbs'][] = array(
+			'text' => $this->language->get('text_home'), 
+			'href' => $this->url->link('common/home', '', true)
+			);
+		$data['breadcrumbs'][] = array(
+			'text' => $this->language->get('text_title'), 
+			'href' => $this->url->link('payment/zarinpal/callback', '', true)
+			);
+
+		try {
+			if($this->request->get['Status'] != 'OK')
+				throw new Exception($this->language->get('error_verify'));
+
+			$order_id = isset($this->session->data['order_id']) ? $this->session->data['order_id'] : 0;
+			$this->load->model('checkout/order');
+			$order_info = @$this->model_checkout_order->getOrder($order_id);
+
+			if (!$order_info)
+				throw new Exception($this->language->get('error_order_id'));
+
+			$authority = $this->request->get['Authority'];
+			$amount = $this->correctAmount($order_info);
+
+			$verifyResult = $this->verifyPayment($authority, $amount);
+
+			if (!$verifyResult)
+				throw new Exception($this->language->get('error_connect_verify'));
+
+			switch ( array_keys($verifyResult)[0] ) {
+				case 'RefID': // success
+					$comment = $this->language->get('text_results') . $verifyResult['RefID'];
+					$this->model_checkout_order->addOrderHistory($order_id, $this->config->get('zarinpal_order_status_id'), $comment, true);
+
+					$data['error_warning'] = NULL;
+					$data['results'] = $verifyResult['RefID'];
+					$data['button_continue'] = $this->language->get('button_complete');
+					$data['continue'] = $this->url->link('checkout/success');
+
+						break;
+
+				case 'Status': // error with error status
+					throw new Exception($this->checkState($verifyResult['Status'])['error']);
+						break;
+			}
+
+		} catch (Exception $e) {
+			$data['error_warning'] = $e->getMessage();
+			$data['button_continue'] = $this->language->get('button_view_cart');
+			$data['continue'] = $this->url->link('checkout/cart');
+		}
+
+		$data['column_left'] = $this->load->controller('common/column_left');
+		$data['column_right'] = $this->load->controller('common/column_right');
+		$data['content_top'] = $this->load->controller('common/content_top');
+		$data['content_bottom'] = $this->load->controller('common/content_bottom');
+		$data['footer'] = $this->load->controller('common/footer');
+		$data['header'] = $this->load->controller('common/header');
+
+		$this->response->setOutput($this->load->view('payment/zarinpal_confirm', $data));
+	}
+
+	private function correctAmount($order_info)
+	{
+		$amount = $this->currency->format($order_info['total'], $order_info['currency_code'], $order_info['currency_value'], false);
+		$amount = round($amount);
+		$amount = $this->currency->convert($amount, $order_info['currency_code'], "TOM");
+		return (int)$amount;
+	}
+
+	private function zpRequest($parameters){
+		// URL also Can be https://ir.zarinpal.com/pg/services/WebGate/wsdl
+		try{
+			$client = new SoapClient('https://www.zarinpal.com/pg/services/WebGate/wsdl', array('encoding' => 'UTF-8'));
+			return $client->PaymentRequest($parameters);
+
+		} catch(SoapFault $e) {
+			return false;
 		}
 	}
 
+	private function zpVerification($context){
+		// URL also Can be https://ir.zarinpal.com/pg/services/WebGate/wsdl
+		try {
+			$client = new SoapClient('https://www.zarinpal.com/pg/services/WebGate/wsdl', array('encoding' => 'UTF-8')); 
+
+			return $client->PaymentVerification($context);
+
+		} catch(SoapFault $e) {
+			return false;
+		}		
+	}
+
+	private function checkState($status) {
+		$json = array();
+		$json['error'] = $this->language->get('error_status_undefined');
+
+		if ($this->language->get('error_status_' . $status) != 'error_status_' . $status ) {
+			$json['error'] = $this->language->get('error_status_' . $status);
+		}
+
+		return $json;
+	}
+
+
+	private function verifyPayment($authority, $amount){
+
+		$data['MerchantID'] = $this->config->get('zarinpal_pin');
+		$context = array(
+			'MerchantID'	 => $data['MerchantID'],
+			'Authority' 	 => $authority,
+			'Amount'	 => $amount
+			);
+		$verifyResult = $this->zpVerification($context);
+
+		if(!$verifyResult) {
+			// echo  $this->language->get('error_cant_connect');
+			return false;
+		} elseif($verifyResult->Status == 100) {
+			return ['RefID' => $verifyResult->RefID];
+		} else {
+			return ['Status' => $verifyResult->Status];
+		}
+	}
 }
 ?>

@@ -1,44 +1,39 @@
 <script type="text/javascript" src="https://cdn.zarinpal.com/zarinak/v1/checkout.js"></script>
-<h2><?php echo $text_instruction; ?></h2>
-<p><b><?php echo $text_description; ?></b></p>
-<div class="well well-sm">
-  <p><?php echo $bank; ?></p>
-  <p><?php echo $text_payment; ?></p>
-</div>
+<fieldset id="payment"></fieldset>
 <div class="buttons">
-  <div class="right"><a id="button-confirm" class="btn btn-primary"><span><?php echo $button_confirm; ?></span></a></div>
+  <div class="pull-right">
+    <input type="button" value="<?php echo $button_confirm; ?>" id="button-confirm" data-loading-text="<?php echo $text_loading; ?>" class="btn btn-primary" />
+  </div>
 </div>
-
 <script type="text/javascript"><!--
 $('#button-confirm').bind('click', function() {
 	$.ajax({
 		type: 'GET',
-		url: 'index.php?route=payment/zarinpal/confirm',
 		dataType: 'json',
+		url: 'index.php?route=payment/zarinpal/confirm',
+		//cache: false,
+		data: $('#payment :input'),
 		beforeSend: function() {
 			$('#button-confirm').attr('disabled', true);
-
-			$('#payment').before('<div class="attention"><img src="catalog/view/theme/default/image/loading.gif" alt="" /> <?php echo $text_wait; ?></div>');
+			$('#payment').before('<div class="alert alert-info"><i class="fa fa-info-circle"></i> <?php echo $text_wait; ?></div>');
+		},
+		complete: function() {
+			$('#button-confirm').attr('disabled', false);
+			$('.alert-info').remove();
 		},
 		success: function(json) {
 			if (json['error']) {
-				alert(json['error']);
-
+				$('#payment').before('<div class="alert alert-danger"><i class="fa fa-info-exclamation"></i>' + json['error'] + '</div>');
 				$('#button-confirm').attr('disabled', false);
-
 			}
-
-			$('.attention').remove();
-
+			
+			$('.alert-info').remove();
 			if (json['success']) {
-				$('#payment').before('<div class="success"><img src="catalog/view/theme/default/image/loading.gif" alt="" /> <?php echo $text_ersal; ?></div>');
+				$('#payment').before('<div class="alert alert-success"><i class="fa fa-check-circle"></i> <?php echo $text_connect; ?></div>');
 				//location = json['success'];
 				Zarinak.setAuthority(json['success']);
 				Zarinak.open();
 			}
-
-
-
 		}
 	});
 });
